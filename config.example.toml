@@ -1,0 +1,28 @@
+[server]
+bind = "0.0.0.0:3000"
+webhook_secret = "your-jira-webhook-secret"
+storage_path = "./data"
+
+[jira]
+base_url = "https://myorg.atlassian.net"
+pat = "your-jira-personal-access-token"
+transition_to = "In Review"
+ready_to_dev_status = "ready-to-dev"
+
+[github]
+token = "ghp_your-github-personal-access-token"
+
+[opencode]
+model = "anthropic/claude-sonnet-4-20250514"
+# Any extra opencode config keys. These are serialized as JSON
+# and passed via OPENCODE_CONFIG_CONTENT.
+# [opencode.extra]
+# provider = { anthropic = { options = { apiKey = "..." } } }
+
+[[mapping]]
+label = "backend"
+repo = "https://github.com/myorg/backend.git"
+
+[[mapping]]
+label = "frontend"
+repo = "https://github.com/myorg/frontend.git"
