@@ -24,6 +24,16 @@ pub enum AppError {
     #[error("task not found: {0}")]
     TaskNotFound(String),
 
+    #[error("session not found for task: {0}")]
+    SessionNotFound(String),
+
+    #[error("no original task found for PR {0}/#{1}")]
+    NoOriginalTask(String, i64),
+
+    #[allow(dead_code)]
+    #[error("event ignored")]
+    IgnoreEvent,
+
     #[error("{0}")]
     Internal(#[from] eyre::Error),
 }
@@ -35,6 +45,9 @@ impl IntoResponse for AppError {
             AppError::NoMatchingRepo => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::DuplicateTask => (StatusCode::CONFLICT, self.to_string()),
             AppError::TaskNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::SessionNotFound(_) => (StatusCode::CONFLICT, self.to_string()),
+            AppError::NoOriginalTask(_, _) => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::IgnoreEvent => (StatusCode::OK, String::new()),
             _ => {
                 tracing::error!(error = %self, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".into())

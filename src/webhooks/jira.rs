@@ -1,11 +1,12 @@
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use eyre::WrapErr;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
-use crate::state::AppState;
 use crate::error::AppError;
+use crate::state::AppState;
 use crate::webhooks::types::JiraWebhookPayload;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -13,10 +14,13 @@ type HmacSha256 = Hmac<Sha256>;
 pub async fn handle_jira_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::Json(payload): axum::Json<JiraWebhookPayload>,
+    body: Bytes,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let body = serde_json::to_string(&payload).unwrap_or_default();
     verify_webhook_signature(&headers, &body, &state.config.server.webhook_secret)?;
+
+    let payload: JiraWebhookPayload = serde_json::from_slice(&body)
+        .with_context(|| "parsing Jira webhook payload")
+        .map_err(AppError::from)?;
 
     let issue = payload
         .issue
@@ -57,7 +61,11 @@ pub async fn handle_jira_webhook(
         .find_map(|label| state.config.find_repo_for_label(label))
         .ok_or(AppError::NoMatchingRepo)?;
 
-    if let Some(existing) = state.db.find_active_task_by_jira_key(&issue.key).await? {
+    if let Some(existing) = state
+        .db
+        .find_active_task_by_jira_key(&issue.key)
+        .await?
+    {
         tracing::warn!(
             jira_key = %issue.key,
             task_id = %existing.id,
@@ -69,10 +77,12 @@ pub async fn handle_jira_webhook(
     let task = state
         .db
         .insert_task(
-            &issue.key,
+            Some(&issue.key),
             &issue.fields.summary,
             issue.fields.description.as_deref(),
             repo_url,
+            "jira",
+            None,
         )
         .await?;
 
@@ -88,9 +98,9 @@ pub async fn handle_jira_webhook(
     Ok(axum::http::StatusCode::ACCEPTED)
 }
 
-fn verify_webhook_signature(
+pub fn verify_webhook_signature(
     headers: &HeaderMap,
-    body: &str,
+    body: &[u8],
     secret: &str,
 ) -> Result<(), AppError> {
     let signature = headers
@@ -107,7 +117,7 @@ fn verify_webhook_signature(
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .expect("HMAC accepts any key length");
-    mac.update(body.as_bytes());
+    mac.update(body);
 
     let result = mac.finalize();
     let computed = hex::encode(result.into_bytes());
@@ -119,7 +129,7 @@ fn verify_webhook_signature(
     Ok(())
 }
 
-fn timing_safe_eq(a: &str, b: &str) -> bool {
+pub fn timing_safe_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -10,6 +11,7 @@ mod config;
 mod db;
 mod docker;
 mod error;
+mod github;
 mod jira;
 mod state;
 mod webhooks;
@@ -36,13 +38,38 @@ async fn main() -> eyre::Result<()> {
     );
     let db = db::Db::new(&db_url).await?;
 
+    let github_client = github::GitHubClient::new(&config.github.token);
+    let github_username = github_client
+        .get_authenticated_user()
+        .await
+        .with_context(|| "fetching GitHub authenticated user (check your token)")?;
+
+    tracing::info!(github_user = %github_username, "authenticated with GitHub");
+
+    let (review_notify_tx, mut review_notify_rx) =
+        tokio::sync::mpsc::unbounded_channel::<String>();
+
     let state = state::AppState {
         config: config.clone(),
         db,
+        github_username,
+        review_queue: Arc::new(Mutex::new(Default::default())),
+        review_notify: review_notify_tx,
     };
+
+    let queue_state = state.clone();
+    tokio::spawn(async move {
+        while let Some(queue_key) = review_notify_rx.recv().await {
+            docker::process_next_queued_review(&queue_state, &queue_key).await;
+        }
+    });
 
     let app = Router::new()
         .route("/webhook/jira", post(webhooks::jira::handle_jira_webhook))
+        .route(
+            "/webhook/github",
+            post(webhooks::github::handle_github_webhook),
+        )
         .route("/tasks", get(api::list_tasks))
         .route("/tasks/{id}", get(api::get_task))
         .route("/health", get(api::health))

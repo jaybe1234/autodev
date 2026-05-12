@@ -34,6 +34,7 @@ pub struct JiraConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubConfig {
     pub token: String,
+    pub webhook_secret: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

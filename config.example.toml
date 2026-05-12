@@ -11,6 +11,7 @@ ready_to_dev_status = "ready-to-dev"
 
 [github]
 token = "ghp_your-github-personal-access-token"
+webhook_secret = "your-github-webhook-secret"
 
 [opencode]
 model = "anthropic/claude-sonnet-4-20250514"

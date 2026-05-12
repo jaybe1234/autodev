@@ -21,3 +21,18 @@ addressed in future iterations.
   `[[mapping]]` entry, only the first match is used today. A future iteration
   could spawn one container per matching label, or require an unambiguous
   mapping.
+
+- **Inline review comments** — Only the review body (summary comment) is
+  forwarded to the agent. Inline `pull_request_review_comment` events with
+  line-specific feedback are not handled yet.
+
+- **Review queue persistence** — The review queue is in-memory
+  (`Mutex<HashMap>`). If the server restarts, queued reviews are lost. Consider
+  persisting them in SQLite or accepting this as acceptable since GitHub retries
+  webhook deliveries.
+
+- **Branch name for comment-triggered reviews** — When an `issue_comment`
+  triggers a review, the branch name is derived from the original task's
+  `jira_key` (`autodev/<key>`). This could break if the PR branch was renamed
+  manually. A more robust approach would store the branch name in the DB when
+  the original task completes.

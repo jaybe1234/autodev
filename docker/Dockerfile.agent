@@ -1,6 +1,6 @@
 FROM ghcr.io/anomalyco/opencode:latest
 
-RUN apk add --no-cache git github-cli
+RUN apk add --no-cache git github-cli jq
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
