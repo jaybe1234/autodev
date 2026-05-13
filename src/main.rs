@@ -65,9 +65,9 @@ async fn main() -> eyre::Result<()> {
     });
 
     let app = Router::new()
-        .route("/webhook/jira", post(webhooks::jira::handle_jira_webhook))
+        .route("/webhooks/jira", post(webhooks::jira::handle_jira_webhook))
         .route(
-            "/webhook/github",
+            "/webhooks/github",
             post(webhooks::github::handle_github_webhook),
         )
         .route("/tasks", get(api::list_tasks))

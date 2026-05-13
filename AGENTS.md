@@ -127,8 +127,8 @@ Config path override: `AUTODEV_CONFIG=./path/to/config.toml cargo run`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/webhook/jira` | Jira webhook receiver (HMAC-verified) |
-| POST | `/webhook/github` | GitHub webhook receiver (HMAC-verified) |
+| POST | `/webhooks/jira` | Jira webhook receiver (HMAC-verified) |
+| POST | `/webhooks/github` | GitHub webhook receiver (HMAC-verified) |
 | GET | `/tasks` | List all tasks |
 | GET | `/tasks/{id}` | Get task by ID |
 | GET | `/health` | Health check |

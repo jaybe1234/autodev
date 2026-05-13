@@ -1,1 +1,8 @@
 /target
+/data
+
+# Config file
+config.toml
+
+# Cloudflared tunnel script
+run-cloudflared.sh
