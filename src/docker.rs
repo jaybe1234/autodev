@@ -71,7 +71,7 @@ pub async fn spawn_agent(
     ];
 
     let container_id =
-        create_and_start_container(&docker, &task.id, &env, &session_dir).await?;
+        create_and_start_container(&docker, &task.id, &env, &session_dir, config.figma.is_some()).await?;
 
     db.update_task_status(&task.id, "running", Some(&container_id), None, None)
         .await?;
@@ -251,7 +251,7 @@ pub async fn spawn_review_agent(
     ];
 
     let container_id =
-        create_and_start_container(&docker, &review_task.id, &env, &session_dir).await?;
+        create_and_start_container(&docker, &review_task.id, &env, &session_dir, state.config.figma.is_some()).await?;
 
     state
         .db
@@ -387,6 +387,7 @@ async fn create_and_start_container(
     task_id: &str,
     env: &[String],
     session_dir: &Path,
+    figma_enabled: bool,
 ) -> Result<String, AppError> {
     let container_name = format!("autodev-{task_id}");
     let create_options = CreateContainerOptionsBuilder::new()
@@ -402,6 +403,11 @@ async fn create_and_start_container(
                 "{}:/root/.local/share/opencode",
                 session_dir.display()
             )]),
+            extra_hosts: if figma_enabled {
+                Some(vec!["host.docker.internal:host-gateway".into()])
+            } else {
+                None
+            },
             ..Default::default()
         }),
         ..Default::default()
@@ -645,6 +651,19 @@ fn build_opencode_config(config: &AppConfig) -> String {
             "doom_loop": "allow",
         }),
     );
+
+    if let Some(ref figma) = config.figma {
+        cfg.insert(
+            "mcp".into(),
+            serde_json::json!({
+                "figma": {
+                    "type": "remote",
+                    "url": format!("http://host.docker.internal:{}/mcp", figma.port),
+                    "enabled": true,
+                }
+            }),
+        );
+    }
 
     for (key, value) in &config.opencode.extra {
         cfg.insert(key.clone(), value.clone());

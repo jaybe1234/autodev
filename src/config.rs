@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub github: GitHubConfig,
     pub opencode: OpencodeConfig,
     pub mapping: Vec<MappingEntry>,
+    pub figma: Option<FigmaConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,6 +44,15 @@ pub struct OpencodeConfig {
     pub model: String,
     #[serde(default)]
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FigmaConfig {
+    pub access_token: String,
+    #[serde(default = "default_figma_port")]
+    pub port: u16,
+    #[serde(default = "default_figma_host")]
+    pub host: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -82,4 +92,12 @@ fn default_transition_to() -> String {
 
 fn default_model() -> String {
     "anthropic/claude-sonnet-4-20250514".into()
+}
+
+fn default_figma_port() -> u16 {
+    3100
+}
+
+fn default_figma_host() -> String {
+    "127.0.0.1".into()
 }

@@ -11,6 +11,7 @@ mod config;
 mod db;
 mod docker;
 mod error;
+mod figma_mcp;
 mod github;
 mod jira;
 mod state;
@@ -45,6 +46,18 @@ async fn main() -> eyre::Result<()> {
         .with_context(|| "fetching GitHub authenticated user (check your token)")?;
 
     tracing::info!(github_user = %github_username, "authenticated with GitHub");
+
+    let mut figma_mcp_process = if let Some(ref figma_config) = config.figma {
+        match figma_mcp::FigmaMcpProcess::start(figma_config).await {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to start figma MCP server, continuing without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let (review_notify_tx, mut review_notify_rx) =
         tokio::sync::mpsc::unbounded_channel::<String>();
@@ -81,9 +94,23 @@ async fn main() -> eyre::Result<()> {
 
     tracing::info!(addr = %config.server.bind, "autodev server starting");
 
+    let shutdown_signal = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to listen for ctrl+c");
+        tracing::info!("received shutdown signal");
+    };
+
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
         .await
         .with_context(|| "server error")?;
+
+    if let Some(ref mut proc) = figma_mcp_process {
+        if let Err(e) = proc.shutdown().await {
+            tracing::error!(error = %e, "error shutting down figma MCP process");
+        }
+    }
 
     Ok(())
 }

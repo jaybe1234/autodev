@@ -27,3 +27,12 @@ repo = "https://github.com/myorg/backend.git"
 [[mapping]]
 label = "frontend"
 repo = "https://github.com/myorg/frontend.git"
+
+# Optional: expose a Figma MCP server for coding agents.
+# Requires npx (Node.js) on the host. The server runs as a child
+# process alongside autodev and is reachable from agent containers
+# via host.docker.internal.
+# [figma]
+# access_token = "figd-your-personal-access-token"
+# port = 3100
+# host = "127.0.0.1"
