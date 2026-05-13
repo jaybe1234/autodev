@@ -1,11 +1,13 @@
+mod types;
+
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::webhooks::github_types::{IssueCommentEvent, PullRequestReviewEvent};
-use crate::webhooks::jira::verify_webhook_signature;
+use crate::webhooks::crypto::verify_webhook_signature;
+use types::{IssueCommentEvent, PullRequestReviewEvent};
 
 pub async fn handle_github_webhook(
     State(state): State<AppState>,
