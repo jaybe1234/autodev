@@ -30,10 +30,7 @@ impl JiraClient {
     }
 
     pub async fn add_comment(&self, issue_key: &str, body: &str) -> eyre::Result<()> {
-        let url = format!(
-            "{}/rest/api/2/issue/{}/comment",
-            self.base_url, issue_key
-        );
+        let url = format!("{}/rest/api/2/issue/{}/comment", self.base_url, issue_key);
 
         self.client
             .post(&url)
@@ -49,11 +46,7 @@ impl JiraClient {
         Ok(())
     }
 
-    pub async fn transition_issue(
-        &self,
-        issue_key: &str,
-        target_status: &str,
-    ) -> eyre::Result<()> {
+    pub async fn transition_issue(&self, issue_key: &str, target_status: &str) -> eyre::Result<()> {
         let transitions_url = format!(
             "{}/rest/api/2/issue/{}/transitions",
             self.base_url, issue_key

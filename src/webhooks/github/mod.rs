@@ -58,11 +58,7 @@ async fn handle_pull_request_review(
     let pr_number = payload.pull_request.number;
     let pr_repo = &payload.repository.full_name;
     let branch_name = &payload.pull_request.head.ref_name;
-    let review_body = payload
-        .review
-        .body
-        .as_deref()
-        .unwrap_or("(no review body)");
+    let review_body = payload.review.body.as_deref().unwrap_or("(no review body)");
     let review_state = &payload.review.state;
 
     tracing::info!(
@@ -208,11 +204,11 @@ async fn spawn_or_queue_review(
         };
 
         let queue_key = format!("{}#{}", info.pr_repo, info.pr_number);
-        let mut queue = state.review_queue.lock().expect("review queue lock poisoned");
-        queue
-            .entry(queue_key)
-            .or_default()
-            .push_back(queued);
+        let mut queue = state
+            .review_queue
+            .lock()
+            .expect("review queue lock poisoned");
+        queue.entry(queue_key).or_default().push_back(queued);
 
         return Ok(axum::http::StatusCode::ACCEPTED);
     }

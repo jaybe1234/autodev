@@ -6,7 +6,7 @@ use bollard::query_parameters::{
     BuildImageOptionsBuilder, CreateContainerOptionsBuilder, LogsOptions,
     RemoveContainerOptionsBuilder, WaitContainerOptions,
 };
-use bollard::{body_full, Docker};
+use bollard::{Docker, body_full};
 use eyre::WrapErr;
 use futures_util::StreamExt;
 
@@ -27,22 +27,14 @@ struct ContainerResult {
     session_id: Option<String>,
 }
 
-pub async fn spawn_agent(
-    config: &AppConfig,
-    db: &Db,
-    task: &Task,
-) -> Result<String, AppError> {
+pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<String, AppError> {
     let docker = Docker::connect_with_local_defaults()
         .with_context(|| "connecting to Docker daemon")
         .map_err(AppError::from)?;
 
     ensure_agent_image(&docker).await?;
 
-    let session_dir = config
-        .server
-        .storage_path
-        .join("sessions")
-        .join(&task.id);
+    let session_dir = config.server.storage_path.join("sessions").join(&task.id);
     tokio::fs::create_dir_all(&session_dir)
         .await
         .with_context(|| "creating session directory")
@@ -50,8 +42,7 @@ pub async fn spawn_agent(
 
     let prompt = build_prompt(task);
     let opencode_config_content = build_opencode_config(config);
-    let repo_url_with_token =
-        inject_token_in_repo_url(&task.repo_url, &config.github.token);
+    let repo_url_with_token = inject_token_in_repo_url(&task.repo_url, &config.github.token);
     let jira_key = task.jira_key.as_deref().ok_or_else(|| {
         AppError::Internal(eyre::eyre!("jira_key missing for implementation task"))
     })?;
@@ -62,16 +53,19 @@ pub async fn spawn_agent(
         format!("JIRA_KEY={}", jira_key),
         format!("BRANCH_NAME={}", branch_name),
         format!("OPENCODE_PROMPT={}", prompt),
-        format!(
-            "OPENCODE_CONFIG_CONTENT={}",
-            opencode_config_content
-        ),
+        format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
         format!("GITHUB_TOKEN={}", config.github.token),
         format!("OPENCODE_MODEL={}", config.opencode.model),
     ];
 
-    let container_id =
-        create_and_start_container(&docker, &task.id, &env, &session_dir, config.figma.is_some()).await?;
+    let container_id = create_and_start_container(
+        &docker,
+        &task.id,
+        &env,
+        &session_dir,
+        config.figma.is_some(),
+    )
+    .await?;
 
     db.update_task_status(&task.id, "running", Some(&container_id), None, None)
         .await?;
@@ -95,14 +89,13 @@ pub async fn spawn_agent(
 
         match result {
             Ok(container_result) => {
-                let (status, error): (&str, Option<String>) =
-                    match &container_result.pr_url {
-                        Some(_) => ("done", None),
-                        None => (
-                            "failed",
-                            Some("container exited but no PR URL found in logs".into()),
-                        ),
-                    };
+                let (status, error): (&str, Option<String>) = match &container_result.pr_url {
+                    Some(_) => ("done", None),
+                    None => (
+                        "failed",
+                        Some("container exited but no PR URL found in logs".into()),
+                    ),
+                };
 
                 if let Err(e) = db_clone
                     .update_task_status(
@@ -129,8 +122,7 @@ pub async fn spawn_agent(
                     tracing::error!(error = %e, "failed to update task PR info");
                 }
 
-                let jira_client =
-                    JiraClient::new(&jira_config.base_url, &jira_config.pat);
+                let jira_client = JiraClient::new(&jira_config.base_url, &jira_config.pat);
                 match status {
                     "done" => {
                         if let Some(ref pr) = container_result.pr_url {
@@ -138,17 +130,13 @@ pub async fn spawn_agent(
                                 "Autodev has implemented this ticket and opened a PR: {}",
                                 pr
                             );
-                            if let Err(e) =
-                                jira_client.add_comment(&jira_key_owned, &comment).await
+                            if let Err(e) = jira_client.add_comment(&jira_key_owned, &comment).await
                             {
                                 tracing::error!(error = %e, "failed to add Jira comment");
                             }
                         }
                         if let Err(e) = jira_client
-                            .transition_issue(
-                                &jira_key_owned,
-                                &jira_config.transition_to,
-                            )
+                            .transition_issue(&jira_key_owned, &jira_config.transition_to)
                             .await
                         {
                             tracing::error!(error = %e, "failed to transition Jira issue");
@@ -159,10 +147,7 @@ pub async fn spawn_agent(
                             "Autodev failed to implement this ticket. Error: {}",
                             error.unwrap_or_default()
                         );
-                        if let Err(e) = jira_client
-                            .add_comment(&jira_key_owned, &comment)
-                            .await
-                        {
+                        if let Err(e) = jira_client.add_comment(&jira_key_owned, &comment).await {
                             tracing::error!(error = %e, "failed to add failure comment to Jira");
                         }
                     }
@@ -179,9 +164,7 @@ pub async fn spawn_agent(
             }
         }
 
-        let remove_opts = RemoveContainerOptionsBuilder::new()
-            .force(true)
-            .build();
+        let remove_opts = RemoveContainerOptionsBuilder::new().force(true).build();
         let _ = docker
             .remove_container(&container_id_clone, Some(remove_opts))
             .await
@@ -241,17 +224,20 @@ pub async fn spawn_review_agent(
         format!("MODE=review"),
         format!("OPENCODE_SESSION_ID={}", session_id),
         format!("OPENCODE_PROMPT={}", prompt),
-        format!(
-            "OPENCODE_CONFIG_CONTENT={}",
-            opencode_config_content
-        ),
+        format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
         format!("GITHUB_TOKEN={}", state.config.github.token),
         format!("OPENCODE_MODEL={}", state.config.opencode.model),
         format!("PR_NUMBER={}", params.pr_number),
     ];
 
-    let container_id =
-        create_and_start_container(&docker, &review_task.id, &env, &session_dir, state.config.figma.is_some()).await?;
+    let container_id = create_and_start_container(
+        &docker,
+        &review_task.id,
+        &env,
+        &session_dir,
+        state.config.figma.is_some(),
+    )
+    .await?;
 
     state
         .db
@@ -273,8 +259,7 @@ pub async fn spawn_review_agent(
             }
         };
 
-        let result =
-            wait_for_container_and_parse_result(&docker, &container_id_clone).await;
+        let result = wait_for_container_and_parse_result(&docker, &container_id_clone).await;
 
         match result {
             Ok(_) => {
@@ -287,13 +272,7 @@ pub async fn spawn_review_agent(
             }
             Err(e) => {
                 if let Err(e) = db_clone
-                    .update_task_status(
-                        &task_id,
-                        "failed",
-                        None,
-                        None,
-                        Some(&format!("{e}")),
-                    )
+                    .update_task_status(&task_id, "failed", None, None, Some(&format!("{e}")))
                     .await
                 {
                     tracing::error!(error = %e, "failed to update review task status on error");
@@ -301,9 +280,7 @@ pub async fn spawn_review_agent(
             }
         }
 
-        let remove_opts = RemoveContainerOptionsBuilder::new()
-            .force(true)
-            .build();
+        let remove_opts = RemoveContainerOptionsBuilder::new().force(true).build();
         let _ = docker
             .remove_container(&container_id_clone, Some(remove_opts))
             .await
@@ -319,7 +296,10 @@ pub async fn spawn_review_agent(
 
 pub async fn process_next_queued_review(state: &AppState, queue_key: &str) {
     let review = {
-        let mut queue = state.review_queue.lock().expect("review queue lock poisoned");
+        let mut queue = state
+            .review_queue
+            .lock()
+            .expect("review queue lock poisoned");
         queue.get_mut(queue_key).and_then(|q| q.pop_front())
     };
 
@@ -472,14 +452,14 @@ async fn wait_for_container_and_parse_result(
     let exit_code = match wait_result {
         Some(Ok(response)) => response.status_code,
         Some(Err(e)) => {
-            return Err(AppError::Internal(
-                eyre::eyre!("error waiting for container: {e}"),
-            ));
+            return Err(AppError::Internal(eyre::eyre!(
+                "error waiting for container: {e}"
+            )));
         }
         None => {
-            return Err(AppError::Internal(
-                eyre::eyre!("no wait response from container"),
-            ));
+            return Err(AppError::Internal(eyre::eyre!(
+                "no wait response from container"
+            )));
         }
     };
 
@@ -509,8 +489,7 @@ async fn wait_for_container_and_parse_result(
         None => (None, None, None),
     };
 
-    let session_re =
-        regex::Regex::new(SESSION_ID_PATTERN).expect("invalid session ID regex");
+    let session_re = regex::Regex::new(SESSION_ID_PATTERN).expect("invalid session ID regex");
     let session_id = collected_logs.iter().find_map(|line| {
         session_re
             .captures(line)

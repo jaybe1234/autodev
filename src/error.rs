@@ -50,7 +50,10 @@ impl IntoResponse for AppError {
             AppError::IgnoreEvent => (StatusCode::OK, String::new()),
             _ => {
                 tracing::error!(error = %self, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".into())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".into(),
+                )
             }
         };
         (status, message).into_response()

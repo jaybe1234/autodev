@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 use eyre::WrapErr;
 use tracing_subscriber::EnvFilter;
 
@@ -33,10 +33,7 @@ async fn main() -> eyre::Result<()> {
         .await
         .with_context(|| "creating storage directory")?;
 
-    let db_url = format!(
-        "sqlite:{}/autodev.db",
-        config.server.storage_path.display()
-    );
+    let db_url = format!("sqlite:{}/autodev.db", config.server.storage_path.display());
     let db = db::Db::new(&db_url).await?;
 
     let github_client = github::GitHubClient::new(&config.github.token);
@@ -59,8 +56,7 @@ async fn main() -> eyre::Result<()> {
         None
     };
 
-    let (review_notify_tx, mut review_notify_rx) =
-        tokio::sync::mpsc::unbounded_channel::<String>();
+    let (review_notify_tx, mut review_notify_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let state = state::AppState {
         config: config.clone(),

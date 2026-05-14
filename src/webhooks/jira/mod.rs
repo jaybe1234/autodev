@@ -31,16 +31,14 @@ pub async fn handle_jira_webhook(
         .map(|cl| {
             cl.items.iter().any(|item| {
                 item.field == "status"
-                    && item
-                        .to_string
-                        .eq_ignore_ascii_case(
-                            state
-                                .config
-                                .jira
-                                .ready_to_dev_status
-                                .as_deref()
-                                .unwrap_or("ready-to-dev"),
-                        )
+                    && item.to_string.eq_ignore_ascii_case(
+                        state
+                            .config
+                            .jira
+                            .ready_to_dev_status
+                            .as_deref()
+                            .unwrap_or("ready-to-dev"),
+                    )
             })
         })
         .unwrap_or(false);
@@ -60,11 +58,7 @@ pub async fn handle_jira_webhook(
         .find_map(|label| state.config.find_repo_for_label(label))
         .ok_or(AppError::NoMatchingRepo)?;
 
-    if let Some(existing) = state
-        .db
-        .find_active_task_by_jira_key(&issue.key)
-        .await?
-    {
+    if let Some(existing) = state.db.find_active_task_by_jira_key(&issue.key).await? {
         tracing::warn!(
             jira_key = %issue.key,
             task_id = %existing.id,

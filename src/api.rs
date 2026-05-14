@@ -1,14 +1,12 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 
 use crate::db::Task;
 use crate::error::AppError;
 use crate::state::AppState;
 
-pub async fn list_tasks(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Task>>, AppError> {
+pub async fn list_tasks(State(state): State<AppState>) -> Result<Json<Vec<Task>>, AppError> {
     let tasks = state.db.list_tasks().await?;
     Ok(Json(tasks))
 }

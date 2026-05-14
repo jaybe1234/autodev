@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use eyre::WrapErr;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -35,8 +35,7 @@ pub struct Db {
 
 impl Db {
     pub async fn new(database_url: &str) -> eyre::Result<Self> {
-        let options = SqliteConnectOptions::from_str(database_url)?
-            .create_if_missing(true);
+        let options = SqliteConnectOptions::from_str(database_url)?.create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -95,7 +94,9 @@ impl Db {
         .await
         .with_context(|| "inserting new task")?;
 
-        self.get_task(&id).await?.ok_or_else(|| AppError::TaskNotFound(id))
+        self.get_task(&id)
+            .await?
+            .ok_or_else(|| AppError::TaskNotFound(id))
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Option<Task>, AppError> {

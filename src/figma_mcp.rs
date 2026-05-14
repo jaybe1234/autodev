@@ -60,10 +60,7 @@ impl FigmaMcpProcess {
     }
 }
 
-async fn log_child_stream(
-    label: &'static str,
-    stream: impl tokio::io::AsyncRead + Unpin,
-) {
+async fn log_child_stream(label: &'static str, stream: impl tokio::io::AsyncRead + Unpin) {
     let reader = BufReader::new(stream);
     let mut lines = reader.lines();
     while let Ok(Some(line)) = lines.next_line().await {

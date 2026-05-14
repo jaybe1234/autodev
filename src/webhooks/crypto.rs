@@ -20,12 +20,10 @@ pub fn verify_webhook_signature(
         .with_context(|| "reading webhook signature header")
         .map_err(AppError::from)?;
 
-    let signature = signature
-        .strip_prefix("sha256=")
-        .unwrap_or(signature);
+    let signature = signature.strip_prefix("sha256=").unwrap_or(signature);
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(body);
 
     let result = mac.finalize();
