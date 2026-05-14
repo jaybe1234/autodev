@@ -1,3 +1,4 @@
+use std::fmt;
 use std::str::FromStr;
 
 use chrono::Utc;
@@ -8,6 +9,70 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    Pending,
+    Running,
+    Done,
+    Failed,
+}
+
+impl TaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "pending",
+            TaskStatus::Running => "running",
+            TaskStatus::Done => "done",
+            TaskStatus::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TaskStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(TaskStatus::Pending),
+            "running" => Ok(TaskStatus::Running),
+            "done" => Ok(TaskStatus::Done),
+            "failed" => Ok(TaskStatus::Failed),
+            other => Err(format!("unknown task status: {other}")),
+        }
+    }
+}
+
+impl sqlx::Type<sqlx::sqlite::Sqlite> for TaskStatus {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <String as sqlx::Type<sqlx::sqlite::Sqlite>>::type_info()
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::sqlite::Sqlite> for TaskStatus {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'_>>,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        buf.push(sqlx::sqlite::SqliteArgumentValue::Text(
+            self.as_str().into(),
+        ));
+        Ok(sqlx::encode::IsNull::No)
+    }
+}
+
+impl sqlx::Decode<'_, sqlx::sqlite::Sqlite> for TaskStatus {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'_>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<'_, sqlx::sqlite::Sqlite>>::decode(value)?;
+        s.parse().map_err(Into::into)
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 pub struct Task {
     pub id: String,
@@ -15,7 +80,7 @@ pub struct Task {
     pub summary: String,
     pub description: Option<String>,
     pub repo_url: String,
-    pub status: String,
+    pub status: TaskStatus,
     pub container_id: Option<String>,
     pub pr_url: Option<String>,
     pub error: Option<String>,
@@ -170,7 +235,7 @@ impl Db {
     pub async fn update_task_status(
         &self,
         id: &str,
-        status: &str,
+        status: TaskStatus,
         container_id: Option<&str>,
         pr_url: Option<&str>,
         error: Option<&str>,

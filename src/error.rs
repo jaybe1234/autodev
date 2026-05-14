@@ -50,6 +50,9 @@ impl IntoResponse for AppError {
             AppError::IgnoreEvent => (StatusCode::OK, String::new()),
             _ => {
                 tracing::error!(error = %self, "internal error");
+                if let Some(source) = std::error::Error::source(&self) {
+                    tracing::error!(source = %source, "caused by");
+                }
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal server error".into(),

@@ -65,8 +65,15 @@ impl AppConfig {
     pub fn load(path: &std::path::Path) -> eyre::Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("reading config from {}", path.display()))?;
-        let config: Self = toml::from_str(&content)
+        let mut config: Self = toml::from_str(&content)
             .with_context(|| format!("parsing config from {}", path.display()))?;
+        config.server.storage_path = std::path::absolute(&config.server.storage_path)
+            .with_context(|| {
+                format!(
+                    "resolving absolute path for storage_path {}",
+                    config.server.storage_path.display()
+                )
+            })?;
         Ok(config)
     }
 

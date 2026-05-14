@@ -11,7 +11,7 @@ use eyre::WrapErr;
 use futures_util::StreamExt;
 
 use crate::config::AppConfig;
-use crate::db::{Db, Task};
+use crate::db::{Db, Task, TaskStatus};
 use crate::error::AppError;
 use crate::jira::JiraClient;
 use crate::state::AppState;
@@ -28,49 +28,82 @@ struct ContainerResult {
 }
 
 pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<String, AppError> {
-    let docker = Docker::connect_with_local_defaults()
-        .with_context(|| "connecting to Docker daemon")
-        .map_err(AppError::from)?;
+    let container_id = async {
+        let docker = Docker::connect_with_local_defaults()
+            .with_context(|| "connecting to Docker daemon")
+            .map_err(AppError::from)?;
 
-    ensure_agent_image(&docker).await?;
+        ensure_agent_image(&docker).await?;
 
-    let session_dir = config.server.storage_path.join("sessions").join(&task.id);
-    tokio::fs::create_dir_all(&session_dir)
+        let session_dir = config.server.storage_path.join("sessions").join(&task.id);
+        tokio::fs::create_dir_all(&session_dir)
+            .await
+            .with_context(|| "creating session directory")
+            .map_err(AppError::from)?;
+
+        let prompt = build_prompt(task);
+        let opencode_config_content = build_opencode_config(config);
+        let repo_url_with_token = inject_token_in_repo_url(&task.repo_url, &config.github.token);
+        let jira_key = task.jira_key.as_deref().ok_or_else(|| {
+            AppError::Internal(eyre::eyre!("jira_key missing for implementation task"))
+        })?;
+        let branch_name = format!("autodev/{jira_key}");
+
+        let env = vec![
+            format!("REPO_URL={}", repo_url_with_token),
+            format!("JIRA_KEY={}", jira_key),
+            format!("BRANCH_NAME={}", branch_name),
+            format!("OPENCODE_PROMPT={}", prompt),
+            format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
+            format!("GITHUB_TOKEN={}", config.github.token),
+            format!("OPENCODE_MODEL={}", config.opencode.model),
+        ];
+
+        create_and_start_container(
+            &docker,
+            &task.id,
+            &env,
+            &session_dir,
+            config.figma.is_some(),
+        )
         .await
-        .with_context(|| "creating session directory")
-        .map_err(AppError::from)?;
+    }
+    .await;
 
-    let prompt = build_prompt(task);
-    let opencode_config_content = build_opencode_config(config);
-    let repo_url_with_token = inject_token_in_repo_url(&task.repo_url, &config.github.token);
-    let jira_key = task.jira_key.as_deref().ok_or_else(|| {
-        AppError::Internal(eyre::eyre!("jira_key missing for implementation task"))
-    })?;
-    let branch_name = format!("autodev/{jira_key}");
+    let container_id = match container_id {
+        Ok(id) => id,
+        Err(e) => {
+            if let Err(db_err) = db
+                .update_task_status(
+                    &task.id,
+                    TaskStatus::Failed,
+                    None,
+                    None,
+                    Some(&format!("{e}")),
+                )
+                .await
+            {
+                tracing::error!(error = %db_err, "failed to update task status to failed");
+            }
+            return Err(e);
+        }
+    };
 
-    let env = vec![
-        format!("REPO_URL={}", repo_url_with_token),
-        format!("JIRA_KEY={}", jira_key),
-        format!("BRANCH_NAME={}", branch_name),
-        format!("OPENCODE_PROMPT={}", prompt),
-        format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
-        format!("GITHUB_TOKEN={}", config.github.token),
-        format!("OPENCODE_MODEL={}", config.opencode.model),
-    ];
-
-    let container_id = create_and_start_container(
-        &docker,
-        &task.id,
-        &env,
-        &session_dir,
-        config.figma.is_some(),
-    )
-    .await?;
-
-    db.update_task_status(&task.id, "running", Some(&container_id), None, None)
-        .await?;
+    if let Err(e) = db
+        .update_task_status(
+            &task.id,
+            TaskStatus::Running,
+            Some(&container_id),
+            None,
+            None,
+        )
+        .await
+    {
+        tracing::error!(error = %e, "failed to update task status to running");
+    }
 
     let task_id = task.id.clone();
+    let jira_key = task.jira_key.as_deref().expect("jira_key checked above");
     let jira_key_owned = jira_key.to_string();
     let jira_config = config.jira.clone();
     let db_clone = db.clone();
@@ -81,6 +114,18 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
             Ok(d) => d,
             Err(e) => {
                 tracing::error!(error = %e, "failed to connect to Docker in monitor task");
+                if let Err(db_err) = db_clone
+                    .update_task_status(
+                        &task_id,
+                        TaskStatus::Failed,
+                        None,
+                        None,
+                        Some(&format!("monitor task failed to connect to Docker: {e}")),
+                    )
+                    .await
+                {
+                    tracing::error!(error = %db_err, "failed to update task status to failed");
+                }
                 return;
             }
         };
@@ -89,10 +134,10 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
 
         match result {
             Ok(container_result) => {
-                let (status, error): (&str, Option<String>) = match &container_result.pr_url {
-                    Some(_) => ("done", None),
+                let (status, error): (TaskStatus, Option<String>) = match &container_result.pr_url {
+                    Some(_) => (TaskStatus::Done, None),
                     None => (
-                        "failed",
+                        TaskStatus::Failed,
                         Some("container exited but no PR URL found in logs".into()),
                     ),
                 };
@@ -124,7 +169,7 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
 
                 let jira_client = JiraClient::new(&jira_config.base_url, &jira_config.pat);
                 match status {
-                    "done" => {
+                    TaskStatus::Done => {
                         if let Some(ref pr) = container_result.pr_url {
                             let comment = format!(
                                 "Autodev has implemented this ticket and opened a PR: {}",
@@ -142,7 +187,7 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
                             tracing::error!(error = %e, "failed to transition Jira issue");
                         }
                     }
-                    "failed" => {
+                    TaskStatus::Failed => {
                         let comment = format!(
                             "Autodev failed to implement this ticket. Error: {}",
                             error.unwrap_or_default()
@@ -156,7 +201,13 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
             }
             Err(e) => {
                 if let Err(e) = db_clone
-                    .update_task_status(&task_id, "failed", None, None, Some(&format!("{e}")))
+                    .update_task_status(
+                        &task_id,
+                        TaskStatus::Failed,
+                        None,
+                        None,
+                        Some(&format!("{e}")),
+                    )
                     .await
                 {
                     tracing::error!(error = %e, "failed to update task status on error");
@@ -189,60 +240,92 @@ pub async fn spawn_review_agent(
     parent_task: &Task,
     params: &ReviewParams,
 ) -> Result<String, AppError> {
-    let session_id = parent_task
-        .session_id
-        .as_deref()
-        .ok_or_else(|| AppError::SessionNotFound(parent_task.id.clone()))?;
+    let container_id = async {
+        let session_id = parent_task
+            .session_id
+            .as_deref()
+            .ok_or_else(|| AppError::SessionNotFound(parent_task.id.clone()))?;
 
-    let docker = Docker::connect_with_local_defaults()
-        .with_context(|| "connecting to Docker daemon")
-        .map_err(AppError::from)?;
+        let docker = Docker::connect_with_local_defaults()
+            .with_context(|| "connecting to Docker daemon")
+            .map_err(AppError::from)?;
 
-    ensure_agent_image(&docker).await?;
+        ensure_agent_image(&docker).await?;
 
-    let session_dir = state
-        .config
-        .server
-        .storage_path
-        .join("sessions")
-        .join(&parent_task.id);
+        let session_dir = state
+            .config
+            .server
+            .storage_path
+            .join("sessions")
+            .join(&parent_task.id);
 
-    let prompt = build_review_prompt(
-        params.pr_number,
-        &params.pr_repo,
-        &params.reviewer_login,
-        &params.review_body,
-        &params.review_state,
-    );
-    let opencode_config_content = build_opencode_config(&state.config);
-    let repo_url_with_token =
-        inject_token_in_repo_url(&parent_task.repo_url, &state.config.github.token);
+        let prompt = build_review_prompt(
+            params.pr_number,
+            &params.pr_repo,
+            &params.reviewer_login,
+            &params.review_body,
+            &params.review_state,
+        );
+        let opencode_config_content = build_opencode_config(&state.config);
+        let repo_url_with_token =
+            inject_token_in_repo_url(&parent_task.repo_url, &state.config.github.token);
 
-    let env = vec![
-        format!("REPO_URL={}", repo_url_with_token),
-        format!("BRANCH_NAME={}", params.branch_name),
-        format!("MODE=review"),
-        format!("OPENCODE_SESSION_ID={}", session_id),
-        format!("OPENCODE_PROMPT={}", prompt),
-        format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
-        format!("GITHUB_TOKEN={}", state.config.github.token),
-        format!("OPENCODE_MODEL={}", state.config.opencode.model),
-        format!("PR_NUMBER={}", params.pr_number),
-    ];
+        let env = vec![
+            format!("REPO_URL={}", repo_url_with_token),
+            format!("BRANCH_NAME={}", params.branch_name),
+            "MODE=review".to_string(),
+            format!("OPENCODE_SESSION_ID={}", session_id),
+            format!("OPENCODE_PROMPT={}", prompt),
+            format!("OPENCODE_CONFIG_CONTENT={}", opencode_config_content),
+            format!("GITHUB_TOKEN={}", state.config.github.token),
+            format!("OPENCODE_MODEL={}", state.config.opencode.model),
+            format!("PR_NUMBER={}", params.pr_number),
+        ];
 
-    let container_id = create_and_start_container(
-        &docker,
-        &review_task.id,
-        &env,
-        &session_dir,
-        state.config.figma.is_some(),
-    )
-    .await?;
+        create_and_start_container(
+            &docker,
+            &review_task.id,
+            &env,
+            &session_dir,
+            state.config.figma.is_some(),
+        )
+        .await
+    }
+    .await;
 
-    state
+    let container_id = match container_id {
+        Ok(id) => id,
+        Err(e) => {
+            if let Err(db_err) = state
+                .db
+                .update_task_status(
+                    &review_task.id,
+                    TaskStatus::Failed,
+                    None,
+                    None,
+                    Some(&format!("{e}")),
+                )
+                .await
+            {
+                tracing::error!(error = %db_err, "failed to update review task status to failed");
+            }
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = state
         .db
-        .update_task_status(&review_task.id, "running", Some(&container_id), None, None)
-        .await?;
+        .update_task_status(
+            &review_task.id,
+            TaskStatus::Running,
+            Some(&container_id),
+            None,
+            None,
+        )
+        .await
+    {
+        tracing::error!(error = %e, "failed to update review task status to running");
+    }
 
     let task_id = review_task.id.clone();
     let db_clone = state.db.clone();
@@ -255,6 +338,18 @@ pub async fn spawn_review_agent(
             Ok(d) => d,
             Err(e) => {
                 tracing::error!(error = %e, "failed to connect to Docker in review monitor");
+                if let Err(db_err) = db_clone
+                    .update_task_status(
+                        &task_id,
+                        TaskStatus::Failed,
+                        None,
+                        None,
+                        Some(&format!("review monitor failed to connect to Docker: {e}")),
+                    )
+                    .await
+                {
+                    tracing::error!(error = %db_err, "failed to update review task status to failed");
+                }
                 return;
             }
         };
@@ -264,7 +359,7 @@ pub async fn spawn_review_agent(
         match result {
             Ok(_) => {
                 if let Err(e) = db_clone
-                    .update_task_status(&task_id, "done", None, None, None)
+                    .update_task_status(&task_id, TaskStatus::Done, None, None, None)
                     .await
                 {
                     tracing::error!(error = %e, "failed to update review task status");
@@ -272,7 +367,13 @@ pub async fn spawn_review_agent(
             }
             Err(e) => {
                 if let Err(e) = db_clone
-                    .update_task_status(&task_id, "failed", None, None, Some(&format!("{e}")))
+                    .update_task_status(
+                        &task_id,
+                        TaskStatus::Failed,
+                        None,
+                        None,
+                        Some(&format!("{e}")),
+                    )
                     .await
                 {
                     tracing::error!(error = %e, "failed to update review task status on error");
@@ -402,11 +503,24 @@ async fn create_and_start_container(
     let container_id = result.id;
     tracing::info!(container_id = %container_id, "container created");
 
-    docker
+    if let Err(e) = docker
         .start_container(&container_id, None)
         .await
         .with_context(|| "starting container")
-        .map_err(AppError::from)?;
+    {
+        let remove_opts = RemoveContainerOptionsBuilder::new().force(true).build();
+        let _ = docker
+            .remove_container(&container_id, Some(remove_opts))
+            .await
+            .inspect_err(|rm_err| {
+                tracing::warn!(
+                    container_id = %container_id,
+                    error = %rm_err,
+                    "failed to remove container after start failure"
+                );
+            });
+        return Err(AppError::from(e));
+    }
 
     tracing::info!(container_id = %container_id, "container started");
 
