@@ -1,3 +1,5 @@
+pub mod err;
+
 use std::path::Path;
 
 use bollard::container::LogOutput;
@@ -7,6 +9,7 @@ use bollard::query_parameters::{
     RemoveContainerOptionsBuilder, WaitContainerOptions,
 };
 use bollard::{Docker, body_full};
+use err::ContainerError;
 use eyre::WrapErr;
 use futures_util::StreamExt;
 
@@ -199,18 +202,26 @@ pub async fn spawn_agent(config: &AppConfig, db: &Db, task: &Task) -> Result<Str
                     _ => {}
                 }
             }
-            Err(e) => {
+            Err(container_err) => {
+                let error_msg = if container_err.logs.is_empty() {
+                    container_err.to_string()
+                } else {
+                    container_err.logs.clone()
+                };
                 if let Err(e) = db_clone
-                    .update_task_status(
-                        &task_id,
-                        TaskStatus::Failed,
-                        None,
-                        None,
-                        Some(&format!("{e}")),
-                    )
+                    .update_task_status(&task_id, TaskStatus::Failed, None, None, Some(&error_msg))
                     .await
                 {
                     tracing::error!(error = %e, "failed to update task status on error");
+                }
+
+                let jira_client = JiraClient::new(&jira_config.base_url, &jira_config.pat);
+                let comment = format!(
+                    "Autodev failed to implement this ticket. Error:\n{}",
+                    error_msg
+                );
+                if let Err(e) = jira_client.add_comment(&jira_key_owned, &comment).await {
+                    tracing::error!(error = %e, "failed to add failure comment to Jira");
                 }
             }
         }
@@ -365,15 +376,14 @@ pub async fn spawn_review_agent(
                     tracing::error!(error = %e, "failed to update review task status");
                 }
             }
-            Err(e) => {
+            Err(container_err) => {
+                let error_msg = if container_err.logs.is_empty() {
+                    container_err.to_string()
+                } else {
+                    container_err.logs.clone()
+                };
                 if let Err(e) = db_clone
-                    .update_task_status(
-                        &task_id,
-                        TaskStatus::Failed,
-                        None,
-                        None,
-                        Some(&format!("{e}")),
-                    )
+                    .update_task_status(&task_id, TaskStatus::Failed, None, None, Some(&error_msg))
                     .await
                 {
                     tracing::error!(error = %e, "failed to update review task status on error");
@@ -530,7 +540,7 @@ async fn create_and_start_container(
 async fn wait_for_container_and_parse_result(
     docker: &Docker,
     container_id: &str,
-) -> Result<ContainerResult, AppError> {
+) -> Result<ContainerResult, ContainerError> {
     let mut logs_stream = docker.logs(
         container_id,
         Some(LogsOptions {
@@ -566,21 +576,53 @@ async fn wait_for_container_and_parse_result(
     let exit_code = match wait_result {
         Some(Ok(response)) => response.status_code,
         Some(Err(e)) => {
-            return Err(AppError::Internal(eyre::eyre!(
-                "error waiting for container: {e}"
-            )));
+            let logs = collected_logs
+                .iter()
+                .rev()
+                .take(20)
+                .rev()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ContainerError {
+                exit_code: -1,
+                logs: format!("error waiting for container: {e}\n{logs}"),
+            });
         }
         None => {
-            return Err(AppError::Internal(eyre::eyre!(
-                "no wait response from container"
-            )));
+            let logs = collected_logs
+                .iter()
+                .rev()
+                .take(20)
+                .rev()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ContainerError {
+                exit_code: -1,
+                logs: format!("no wait response from container\n{logs}"),
+            });
         }
     };
 
     if exit_code != 0 {
-        return Err(AppError::Internal(eyre::eyre!(
-            "container exited with code {exit_code}"
-        )));
+        let last_lines: String = collected_logs
+            .iter()
+            .rev()
+            .take(20)
+            .rev()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        tracing::error!(
+            container = container_id,
+            exit_code,
+            "container exited with non-zero code"
+        );
+        return Err(ContainerError {
+            exit_code,
+            logs: last_lines,
+        });
     }
 
     let pr_re = regex::Regex::new(PR_URL_PATTERN).expect("invalid PR URL regex");
