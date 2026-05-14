@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct JiraWebhookPayload {
+    #[serde(rename = "webhookEvent")]
     pub webhook_event: Option<String>,
     #[serde(rename = "issue_event_type_name")]
     pub event_type: Option<String>,
@@ -48,10 +49,9 @@ pub struct JiraChangelog {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct JiraChangelogItem {
-    #[serde(rename = "field")]
     pub field: String,
-    #[serde(rename = "to_string")]
+    #[serde(rename = "toString")]
     pub to_string: String,
-    #[serde(rename = "from_string")]
+    #[serde(rename = "fromString")]
     pub from_string: Option<String>,
 }

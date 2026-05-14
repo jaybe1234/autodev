@@ -35,8 +35,7 @@ async fn handle_pull_request_review(
     state: &AppState,
     body: &[u8],
 ) -> Result<axum::http::StatusCode, AppError> {
-    let payload: PullRequestReviewEvent = serde_json::from_slice(body)
-        .map_err(|e| AppError::Internal(eyre::eyre!("parsing pull_request_review payload: {e}")))?;
+    let payload: PullRequestReviewEvent = crate::utils::parse_body(body).map_err(AppError::from)?;
 
     if payload.action != "submitted" {
         tracing::debug!(action = %payload.action, "ignoring non-submitted review action");
@@ -95,8 +94,7 @@ async fn handle_issue_comment(
     state: &AppState,
     body: &[u8],
 ) -> Result<axum::http::StatusCode, AppError> {
-    let payload: IssueCommentEvent = serde_json::from_slice(body)
-        .map_err(|e| AppError::Internal(eyre::eyre!("parsing issue_comment payload: {e}")))?;
+    let payload: IssueCommentEvent = crate::utils::parse_body(body).map_err(AppError::from)?;
 
     if payload.action != "created" {
         return Ok(axum::http::StatusCode::OK);

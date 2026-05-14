@@ -3,7 +3,6 @@ mod types;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use eyre::WrapErr;
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -17,9 +16,7 @@ pub async fn handle_jira_webhook(
 ) -> Result<axum::http::StatusCode, AppError> {
     verify_webhook_signature(&headers, &body, &state.config.server.webhook_secret)?;
 
-    let payload: JiraWebhookPayload = serde_json::from_slice(&body)
-        .with_context(|| "parsing Jira webhook payload")
-        .map_err(AppError::from)?;
+    let payload: JiraWebhookPayload = crate::utils::parse_body(&body).map_err(AppError::from)?;
 
     let issue = payload
         .issue

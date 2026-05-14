@@ -68,6 +68,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sha2 0.11.0",
  "sqlx",
  "tar",
@@ -75,6 +76,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2641,6 +2643,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
  "url",
 ]
 

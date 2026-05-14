@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::routing::{get, post};
 use eyre::WrapErr;
+use tower_http::trace::{self, TraceLayer};
+use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
 mod api;
@@ -15,6 +17,7 @@ mod figma_mcp;
 mod github;
 mod jira;
 mod state;
+mod utils;
 mod webhooks;
 
 #[tokio::main]
@@ -82,6 +85,13 @@ async fn main() -> eyre::Result<()> {
         .route("/tasks", get(api::list_tasks))
         .route("/tasks/{id}", get(api::get_task))
         .route("/health", get(api::health))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(trace::DefaultOnRequest::new().level(Level::INFO))
+                .on_response(trace::DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(trace::DefaultOnFailure::new().level(Level::ERROR)),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&config.server.bind)
