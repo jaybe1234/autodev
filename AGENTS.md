@@ -140,6 +140,17 @@ Config path override: `AUTODEV_CONFIG=./path/to/config.toml cargo run`
 | `pull_request_review` | `submitted` | reviewer ≠ bot, state ≠ approved | `changes_requested`: implement changes; `commented`: answer questions |
 | `issue_comment` | `created` | on PR, commenter ≠ bot, @mentions bot | Answer questions or implement requested changes |
 
+## Post-edit verification
+
+After making any changes to Rust source files, always run:
+
+```sh
+cargo fmt
+cargo check
+```
+
+Fix any errors or warnings before considering the task complete.
+
 ## Testing
 
 No test suite yet.  When adding tests, prefer `insta` for snapshot testing and
